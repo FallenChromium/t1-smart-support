@@ -43,6 +43,16 @@ class EmbeddingService:
         # Convert to a NumPy array for compatibility with the model's logic
         return np.array(embedding_list)
 
+    def get_embeddings_from_api(self, texts: list[str], model_name: str = "bge-m3", retries: int = 3, delay: int = 10) -> list[list[float]]:
+        """
+        Gets embeddings for a batch of texts from a custom OpenAI-compatible API
+        with a simple retry mechanism.
+        """
+        response = self.client.embeddings.create(input=texts, model=model_name)
+        response_dict = {item.index: item.embedding for item in response.data}
+        return [response_dict[i] for i in range(len(texts))]
+
+
     
 
 embedding_service = EmbeddingService()
@@ -197,7 +207,17 @@ class SearchService:
         # Prepare the search pattern for SQL ILIKE
         search_pattern = f"%{query}%"
 
-        # Build the statement to search in either column
+        # # --- MODIFIED SearchService to use API and NumPy ---
+class SearchService:
+    def __init__(self, embedding_service: EmbeddingService):
+        self.embedding_service = embedding_service
+
+    def perform_search(self, query: str, session: Session, initial_limit: int = 50) -> list[Dict[str, Any]]:
+        """
+        Performs a two-stage search using the external embedding API for reranking.
+        """
+        # === STAGE 1: FILTER (Get Candidates) - Unchanged ===
+        search_pattern = f"%{query}%"
         statement = (
             select(TicketData.text, TicketData.answer_pattern)
             .where(
@@ -206,17 +226,46 @@ class SearchService:
                     TicketData.answer_pattern.ilike(search_pattern)
                 )
             )
-            .limit(limit)
+            .limit(initial_limit)
         )
+        initial_results = session.exec(statement).all()
 
-        results = session.exec(statement).all()
+        if not initial_results:
+            return []
 
-        # Format the results into a list of dictionaries
-        formatted_results = [
-            {"text": text, "answer_pattern": answer} for text, answer in results
+        # === STAGE 2: RERANK (Score and Sort using API) ===
+
+        # 1. Prepare texts for embedding
+        candidate_texts = [f"{text} [SEP] {answer}" for text, answer in initial_results]
+        
+        # 2. Get embeddings from the external API
+        query_embedding_list = self.embedding_service.get_embedding(query)
+        candidate_embeddings_list = self.embedding_service.get_embeddings_from_api(candidate_texts)
+        
+        # 3. Convert to NumPy arrays for efficient calculation
+        query_emb = np.array([query_embedding_list])
+        candidate_embs = np.array(candidate_embeddings_list)
+        
+        # --- THE FIX IS HERE ---
+        # We transpose the query embedding to align the dimensions for dot product.
+        # (50, 1024) @ (1024, 1) -> (50, 1). Then we flatten it to a 1D list of scores.
+        scores = np.dot(candidate_embs, query_emb.T).flatten().tolist()
+
+        # Combine initial results with their new scores
+        scored_results = [
+            {
+                "text": text,
+                "answer_pattern": answer,
+                "relevance_score": score,
+            }
+            for (text, answer), score in zip(initial_results, scores)
         ]
 
-        return formatted_results
+        # Sort the results by relevance score
+        reranked_results = sorted(scored_results, key=lambda x: x["relevance_score"], reverse=True)
 
-# Initialize the new service
-search_service = SearchService()
+        return reranked_results
+
+
+# Initialize the service with the API-based embedding service
+search_service = SearchService(embedding_service=embedding_service)
