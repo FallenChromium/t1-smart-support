@@ -14,3 +14,5 @@ services:
 
 volumes:
   pgdata: # Stores data outside the container to ensure persistence
+
+#my sanity chech
