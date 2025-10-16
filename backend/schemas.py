@@ -26,3 +26,17 @@ class RetrievedAnswerItem(BaseModel):
 # 2. Define the main response schema which will contain a list of these items
 class TopAnswersResponse(BaseModel):
     answers: List[RetrievedAnswerItem]
+
+
+class SearchRequest(BaseModel):
+    """Request model for the text search endpoint."""
+    query: str
+
+class SearchResultItem(BaseModel):
+    """Represents a single item returned by the text search."""
+    text: str
+    answer_pattern: str
+
+class SearchResponse(BaseModel):
+    """Response model containing a list of search results."""
+    results: List[SearchResultItem]

@@ -10,6 +10,7 @@ import os
 from dotenv import load_dotenv
 from sqlmodel import Session, select
 from scripts.models import TicketData
+from sqlalchemy import or_
 
 load_dotenv()
 
@@ -187,3 +188,35 @@ answer_service = AnswerService(
     embedding_service=embedding_service, 
     prediction_service=prediction_service
 )
+
+class SearchService:
+    def perform_search(self, query: str, session: Session, limit: int = 50) -> list[Dict[str, str]]:
+        """
+        Performs a case-insensitive substring search on the 'text' and 'answer_pattern' columns.
+        """
+        # Prepare the search pattern for SQL ILIKE
+        search_pattern = f"%{query}%"
+
+        # Build the statement to search in either column
+        statement = (
+            select(TicketData.text, TicketData.answer_pattern)
+            .where(
+                or_(
+                    TicketData.text.ilike(search_pattern),
+                    TicketData.answer_pattern.ilike(search_pattern)
+                )
+            )
+            .limit(limit)
+        )
+
+        results = session.exec(statement).all()
+
+        # Format the results into a list of dictionaries
+        formatted_results = [
+            {"text": text, "answer_pattern": answer} for text, answer in results
+        ]
+
+        return formatted_results
+
+# Initialize the new service
+search_service = SearchService()
