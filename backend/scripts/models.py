@@ -7,12 +7,20 @@ import sqlalchemy as sa # <-- Import sqlalchemy
 
 class TicketData(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    
+    # Query related fields
     text: str
-    normalized_text: str = Field(sa_column=sa.Column(sa.Text, unique=False))
+    normalized_text: str = Field(sa_column=sa.Column(sa.Text, unique=True))
+    query_embedding: List[float] = Field(sa_column=Vector(1024))
+
+    # Answer related fields
+    answer_pattern: str
+    normalized_answer: str
+    answer_embedding: List[float] = Field(sa_column=Vector(1024))
+
+    # Category fields
     subcategory: str = Field(index=True)
     category: str = Field(index=True)
-    # Corrected Line: Wrap Vector in sa.Column
-    embedding: List[float] = Field(sa_column=sa.Column(Vector(1024)))
 
 
 class LabelDescription(SQLModel, table=True):

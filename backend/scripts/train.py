@@ -35,18 +35,20 @@ def main():
         # ========== DATA LOADING from DB ==========
         print("="*80 + "\nLOADING DATA FROM DATABASE\n" + "="*80)
         
-        stmt = select(TicketData.subcategory, TicketData.embedding)
+        # MODIFIED: Select the specific query_embedding column for training
+        stmt = select(TicketData.subcategory, TicketData.query_embedding)
         all_data = session.exec(stmt).all()
+        
         y_all = [row[0] for row in all_data]
-        X_all = [row[1] for row in all_data]
+        X_all = [row[1] for row in all_data] # This is now explicitly the query embedding
 
         X_train, X_test, y_train, y_test = train_test_split(
             X_all, y_all, test_size=0.3, random_state=42, stratify=y_all
         )
         print(f"Total data: {len(y_all)}, Train: {len(X_train)}, Test: {len(X_test)}")
 
-        # ========== TAXONOMY from DB ==========
-        print("\n" + "="*80 + "\nLOADING TAXONOMY FROM DATABASE\n" + "="*80)
+        # ... The rest of the training script is identical to the previous version ...
+        # ... from "========== TAXONOMY from DB ==========" onwards.
         
         stmt = select(LabelDescription.subcategory, LabelDescription.category, LabelDescription.generated_label, LabelDescription.embedding)
         label_data = session.exec(stmt).all()
