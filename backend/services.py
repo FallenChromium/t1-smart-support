@@ -8,6 +8,9 @@ from typing import Dict, Any
 import openai
 import os
 from dotenv import load_dotenv
+from sqlmodel import Session, select
+from scripts.models import TicketData
+
 load_dotenv()
 
 # ========== UTILITIES ==========
@@ -127,3 +130,60 @@ class PredictionService:
         }
 
 prediction_service = PredictionService(model_path="final_model.pkl")
+
+class AnswerService:
+    def __init__(self, embedding_service: EmbeddingService, prediction_service: PredictionService):
+        self.embedding_service = embedding_service
+        self.prediction_service = prediction_service # <-- Inject the prediction service
+
+    def find_top_answers(self, query_text: str, session: Session, top_k: int = 3) -> list[Dict[str, Any]]:
+        """
+        Finds top answers by first classifying the query to predict a parent category,
+        then performing an indexed vector search within that category.
+        """
+        # 1. Classify the query to get the predicted parent category
+        prediction_result = self.prediction_service.predict_ticket(query_text)
+        predicted_parent_category = prediction_result['parent']
+        print(f"Query classified. Filtering search to category: '{predicted_parent_category}'")
+        
+        # 2. Embed the user's query
+        normalized_query = unicodedata.normalize("NFKC", query_text.lower())
+        normalized_query = re.sub(r"\s+", " ", normalized_query).strip()
+        query_emb = self.embedding_service.get_embedding(normalized_query)
+
+        # 3. Perform a FILTERED vector similarity search
+        distance_col = TicketData.query_embedding.cosine_distance(query_emb).label("distance")
+        
+        statement = (
+            select(TicketData, distance_col)
+            .where(TicketData.category == predicted_parent_category) # <-- THE KEY OPTIMIZATION
+            .order_by(distance_col)
+            .limit(top_k)
+        )
+        
+        results = session.exec(statement).all()
+
+        # Fallback: If no results found in the predicted category, search the whole dataset
+        if not results:
+            print(f"No results in '{predicted_parent_category}'. Falling back to global search.")
+            statement = select(TicketData, distance_col).order_by(distance_col).limit(top_k)
+            results = session.exec(statement).all()
+
+        # 4. Process the list of results
+        top_answers = []
+        for ticket_data, distance in results:
+            similarity_score = 1 - distance
+            answer_item = {
+                "retrieved_answer": ticket_data.answer_pattern,
+                "matched_query": ticket_data.text,
+                "similarity_score": float(similarity_score)
+            }
+            top_answers.append(answer_item)
+
+        return top_answers
+
+# Initialize the service with the dependency
+answer_service = AnswerService(
+    embedding_service=embedding_service, 
+    prediction_service=prediction_service
+)
