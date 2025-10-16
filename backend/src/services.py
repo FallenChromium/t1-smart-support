@@ -14,16 +14,22 @@ from sqlalchemy import or_
 
 load_dotenv()
 
+
 # ========== UTILITIES ==========
 def l2(a):
     a = np.asarray(a)
-    if a.ndim == 1: return a / (np.linalg.norm(a) + 1e-9)
+    if a.ndim == 1:
+        return a / (np.linalg.norm(a) + 1e-9)
     return a / (np.linalg.norm(a, axis=1, keepdims=True) + 1e-9)
+
 
 # ========== EMBEDDING SERVICE (for inference) ==========
 class EmbeddingService:
     def __init__(self, model_name="BAAI/bge-m3"):
-        self.client = openai.OpenAI(api_key=os.getenv("SCIBOX_API_KEY"), base_url="https://llm.t1v.scibox.tech/v1")
+        self.client = openai.OpenAI(
+            api_key=os.getenv("SCIBOX_API_KEY"),
+            base_url="https://llm.t1v.scibox.tech/v1",
+        )
         self.model_name = "bge-m3"
 
     def get_embedding(self, text: str) -> np.ndarray:
@@ -32,18 +38,21 @@ class EmbeddingService:
         normalized NumPy array, matching the expected interface.
         """
         # The API expects a list, so we wrap our single text in a list
-        resp = self.client.embeddings.create(
-            model=self.model_name,
-            input=[text]
-        )
-        
+        resp = self.client.embeddings.create(model=self.model_name, input=[text])
+
         # Extract the embedding from the response data
         embedding_list = resp.data[0].embedding
-        
+
         # Convert to a NumPy array for compatibility with the model's logic
         return np.array(embedding_list)
 
-    def get_embeddings_from_api(self, texts: list[str], model_name: str = "bge-m3", retries: int = 3, delay: int = 10) -> list[list[float]]:
+    def get_embeddings_from_api(
+        self,
+        texts: list[str],
+        model_name: str = "bge-m3",
+        retries: int = 3,
+        delay: int = 10,
+    ) -> list[list[float]]:
         """
         Gets embeddings for a batch of texts from a custom OpenAI-compatible API
         with a simple retry mechanism.
@@ -53,24 +62,23 @@ class EmbeddingService:
         return [response_dict[i] for i in range(len(texts))]
 
 
-    
-
 embedding_service = EmbeddingService()
+
 
 # ========== PREDICTION SERVICE ==========
 class PredictionService:
     def __init__(self, model_path: str):
-        with open(model_path, 'rb') as f:
+        with open(model_path, "rb") as f:
             model_data = pickle.load(f)
-        
-        self.protos = model_data['protos']
-        self.parent_clf = model_data['parent_clf']
-        self.scaler = model_data['scaler']
-        self.id2sub = model_data['id2sub']
-        self.cat2id = model_data['cat2id']
-        self.id2cat = model_data['id2cat']
-        self.parent_map = model_data['parent_map']
-        self.N_CAT = model_data['N_CAT']
+
+        self.protos = model_data["protos"]
+        self.parent_clf = model_data["parent_clf"]
+        self.scaler = model_data["scaler"]
+        self.id2sub = model_data["id2sub"]
+        self.cat2id = model_data["cat2id"]
+        self.id2cat = model_data["id2cat"]
+        self.parent_map = model_data["parent_map"]
+        self.N_CAT = model_data["N_CAT"]
         self.CONFIDENCE_THRESHOLD = 0.50
 
     def extract_parent_features(self, x_emb):
@@ -79,13 +87,23 @@ class PredictionService:
         for stat_fn in [np.max, np.mean]:
             for p in range(self.N_CAT):
                 mask = self.parent_map == p
-                if mask.any(): features.append(stat_fn(self.protos[mask] @ x_emb))
-                else: features.append(0.0)
-        parent_max_sims = np.array([(self.protos[self.parent_map == p] @ x_emb).max() if (self.parent_map == p).any() else 0 for p in range(self.N_CAT)])
+                if mask.any():
+                    features.append(stat_fn(self.protos[mask] @ x_emb))
+                else:
+                    features.append(0.0)
+        parent_max_sims = np.array(
+            [
+                (self.protos[self.parent_map == p] @ x_emb).max()
+                if (self.parent_map == p).any()
+                else 0
+                for p in range(self.N_CAT)
+            ]
+        )
         if len(parent_max_sims) >= 2:
             sorted_sims = np.sort(parent_max_sims)
             features.append(sorted_sims[-1] - sorted_sims[-2])
-        else: features.append(0.0)
+        else:
+            features.append(0.0)
         return np.array(features, dtype=np.float32)
 
     def predict_ticket(self, query_text: str) -> Dict[str, Any]:
@@ -93,25 +111,29 @@ class PredictionService:
         normalized_query = unicodedata.normalize("NFKC", query_text.lower())
         normalized_query = re.sub(r"\s+", " ", normalized_query).strip()
         query_emb = embedding_service.get_embedding(normalized_query)
-        
+
         # The rest is your original classification logic
         parent_feat = self.extract_parent_features(query_emb)
-        parent_prob = self.parent_clf.predict_proba(self.scaler.transform([parent_feat]))[0]
-        
+        parent_prob = self.parent_clf.predict_proba(
+            self.scaler.transform([parent_feat])
+        )[0]
+
         parent_pred = parent_prob.argmax()
         parent_conf = parent_prob[parent_pred]
-        
-        default_parent = self.cat2id.get('частные клиенты', 0)
+
+        default_parent = self.cat2id.get("частные клиенты", 0)
         routed = False
         if parent_conf < self.CONFIDENCE_THRESHOLD:
             parent_pred = default_parent
             routed = True
-        
+
         children = np.where(self.parent_map == parent_pred)[0]
-        if not len(children): # Fallback if a parent has no children in the filtered taxonomy
-             best_child_idx = 0 # or some other default
-             child_conf = 0.0
-             top3_indices = [0]
+        if not len(
+            children
+        ):  # Fallback if a parent has no children in the filtered taxonomy
+            best_child_idx = 0  # or some other default
+            child_conf = 0.0
+            top3_indices = [0]
         elif len(children) == 1:
             best_child_idx = children[0]
             child_conf = 1.0
@@ -121,63 +143,93 @@ class PredictionService:
             temperature = 0.5
             exp_sims = np.exp(child_sims / temperature)
             child_probs = exp_sims / exp_sims.sum()
-            
-            top3_local = child_probs.argsort()[-min(3, len(children)):][::-1]
+
+            top3_local = child_probs.argsort()[-min(3, len(children)) :][::-1]
             top3_indices = children[top3_local]
             best_child_idx = top3_indices[0]
-            
+
             best_child_local_idx = np.where(children == best_child_idx)[0][0]
             child_conf = child_probs[best_child_local_idx]
-        
-        true_conf =child_conf
-        
+
+        true_conf = child_conf
+
         return {
             "prediction": self.id2sub[best_child_idx],
             "parent": self.id2cat[parent_pred],
             "confidence": float(true_conf),
             "parent_confidence": float(parent_conf),
             "routed": routed,
-            "top3": [self.id2sub[int(x)] for x in top3_indices]
+            "top3": [self.id2sub[int(x)] for x in top3_indices],
         }
+
 
 prediction_service = PredictionService(model_path="final_model.pkl")
 
-class AnswerService:
-    def __init__(self, embedding_service: EmbeddingService, prediction_service: PredictionService):
-        self.embedding_service = embedding_service
-        self.prediction_service = prediction_service # <-- Inject the prediction service
 
-    def find_top_answers(self, query_text: str, session: Session, top_k: int = 3) -> list[Dict[str, Any]]:
+class AnswerService:
+    def __init__(
+        self, embedding_service: EmbeddingService, prediction_service: PredictionService
+    ):
+        self.embedding_service = embedding_service
+        self.prediction_service = (
+            prediction_service  # <-- Inject the prediction service
+        )
+
+    def find_top_answers(
+        self, query_text: str, session: Session, top_k: int = 3
+    ) -> list[Dict[str, Any]]:
         """
         Finds top answers by first classifying the query to predict a parent category,
         then performing an indexed vector search within that category.
         """
         # 1. Classify the query to get the predicted parent category
         prediction_result = self.prediction_service.predict_ticket(query_text)
-        predicted_parent_category = prediction_result['parent']
-        print(f"Query classified. Filtering search to category: '{predicted_parent_category}'")
-        
+        predicted_parent_category = prediction_result["parent"]
+        print(
+            f"Query classified. Filtering search to category: '{predicted_parent_category}'"
+        )
+
         # 2. Embed the user's query
         normalized_query = unicodedata.normalize("NFKC", query_text.lower())
         normalized_query = re.sub(r"\s+", " ", normalized_query).strip()
         query_emb = self.embedding_service.get_embedding(normalized_query)
 
         # 3. Perform a FILTERED vector similarity search
-        distance_col = TicketData.query_embedding.cosine_distance(query_emb).label("distance")
-        
+        distance_col = TicketData.query_embedding.cosine_distance(query_emb).label(
+            "distance"
+        )
+        # To ensure uniqueness by answer_pattern, we over-fetch (top_k * 7) and deduplicate in Python
+        fetch_limit = top_k * 7
+
         statement = (
             select(TicketData, distance_col)
-            .where(TicketData.category == predicted_parent_category) # <-- THE KEY OPTIMIZATION
+            .where(
+                TicketData.category == predicted_parent_category
+            )  # <-- THE KEY OPTIMIZATION
             .order_by(distance_col)
-            .limit(top_k)
+            .limit(fetch_limit)
         )
-        
         results = session.exec(statement).all()
+
+        # Deduplicate by answer_pattern, preserving order
+        seen_patterns = set()
+        unique_results = []
+        for ticket_data, distance in results:
+            if ticket_data.answer_pattern not in seen_patterns:
+                unique_results.append((ticket_data, distance))
+                seen_patterns.add(ticket_data.answer_pattern)
+            if len(unique_results) >= top_k:
+                break
+        results = unique_results
 
         # Fallback: If no results found in the predicted category, search the whole dataset
         if not results:
-            print(f"No results in '{predicted_parent_category}'. Falling back to global search.")
-            statement = select(TicketData, distance_col).order_by(distance_col).limit(top_k)
+            print(
+                f"No results in '{predicted_parent_category}'. Falling back to global search."
+            )
+            statement = (
+                select(TicketData, distance_col).order_by(distance_col).limit(top_k)
+            )
             results = session.exec(statement).all()
 
         # 4. Process the list of results
@@ -187,20 +239,23 @@ class AnswerService:
             answer_item = {
                 "retrieved_answer": ticket_data.answer_pattern,
                 "matched_query": ticket_data.text,
-                "similarity_score": float(similarity_score)
+                "similarity_score": float(similarity_score),
             }
             top_answers.append(answer_item)
 
         return top_answers
 
+
 # Initialize the service with the dependency
 answer_service = AnswerService(
-    embedding_service=embedding_service, 
-    prediction_service=prediction_service
+    embedding_service=embedding_service, prediction_service=prediction_service
 )
 
+
 class SearchService:
-    def perform_search(self, query: str, session: Session, limit: int = 50) -> list[Dict[str, str]]:
+    def perform_search(
+        self, query: str, session: Session, limit: int = 50
+    ) -> list[Dict[str, str]]:
         """
         Performs a case-insensitive substring search on the 'text' and 'answer_pattern' columns.
         """
@@ -208,11 +263,15 @@ class SearchService:
         search_pattern = f"%{query}%"
 
         # # --- MODIFIED SearchService to use API and NumPy ---
+
+
 class SearchService:
     def __init__(self, embedding_service: EmbeddingService):
         self.embedding_service = embedding_service
 
-    def perform_search(self, query: str, session: Session, initial_limit: int = 50) -> list[Dict[str, Any]]:
+    def perform_search(
+        self, query: str, session: Session, initial_limit: int = 50
+    ) -> list[Dict[str, Any]]:
         """
         Performs a two-stage search using the external embedding API for reranking.
         """
@@ -223,7 +282,7 @@ class SearchService:
             .where(
                 or_(
                     TicketData.text.ilike(search_pattern),
-                    TicketData.answer_pattern.ilike(search_pattern)
+                    TicketData.answer_pattern.ilike(search_pattern),
                 )
             )
             .limit(initial_limit)
@@ -237,15 +296,17 @@ class SearchService:
 
         # 1. Prepare texts for embedding
         candidate_texts = [f"{text} [SEP] {answer}" for text, answer in initial_results]
-        
+
         # 2. Get embeddings from the external API
         query_embedding_list = self.embedding_service.get_embedding(query)
-        candidate_embeddings_list = self.embedding_service.get_embeddings_from_api(candidate_texts)
-        
+        candidate_embeddings_list = self.embedding_service.get_embeddings_from_api(
+            candidate_texts
+        )
+
         # 3. Convert to NumPy arrays for efficient calculation
         query_emb = np.array([query_embedding_list])
         candidate_embs = np.array(candidate_embeddings_list)
-        
+
         # --- THE FIX IS HERE ---
         # We transpose the query embedding to align the dimensions for dot product.
         # (50, 1024) @ (1024, 1) -> (50, 1). Then we flatten it to a 1D list of scores.
@@ -262,7 +323,9 @@ class SearchService:
         ]
 
         # Sort the results by relevance score
-        reranked_results = sorted(scored_results, key=lambda x: x["relevance_score"], reverse=True)
+        reranked_results = sorted(
+            scored_results, key=lambda x: x["relevance_score"], reverse=True
+        )
 
         return reranked_results
 
