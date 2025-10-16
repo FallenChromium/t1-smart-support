@@ -1,6 +1,6 @@
 services:
   db:
-    image: pgvector/pgvector:pg17 # PostgreSQL with pgvector support
+    image: pgvector/pgvector:pg17
     container_name: pgvector-db
     environment:
       POSTGRES_USER: postgres
@@ -11,8 +11,40 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d example_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: t1-smart-support-backend:latest
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:password@db:5432/example_db
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    image: t1-smart-support-ui:latest
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
 
 volumes:
-  pgdata: # Stores data outside the container to ensure persistence
-
-#my sanity chech
+  pgdata:

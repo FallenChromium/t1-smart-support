@@ -1,17 +1,20 @@
-# Multi-stage build for production-ready Next.js app
+# syntax=docker/dockerfile:1.7
+# Multi-stage build for production-ready Next.js app with cached builds
 FROM node:20-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
+ENV NPM_CONFIG_CACHE=/root/.npm
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Copy package files
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 # Rebuild the source code only when needed
 FROM base AS builder
+ENV NPM_CONFIG_CACHE=/root/.npm
 WORKDIR /app
 ARG NEXT_PUBLIC_API_URL="http://backend:8000"
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
@@ -22,7 +25,9 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Build the application
-RUN npm run build
+RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,target=/app/.next/cache \
+    npm run build
 
 # Production image, copy all the files and run next
 FROM base AS runner
