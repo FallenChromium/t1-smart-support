@@ -56,31 +56,29 @@ def build_prompt(coarse: str, fine: str, rows: pd.DataFrame) -> str:
 
     keywords = _top_keywords(question_series, limit=5)
     keywords_line = (
-        "Ключевые мотивы обращений: " + ", ".join(keywords) if keywords else ""
+        "Key user inent: " + ", ".join(keywords) if keywords else ""
     )
 
     return (
-        "Ты — аналитик службы поддержки, который формулирует короткие и точные названия "
-        "подкатегорий обращений.\n"
-        f"Верхнеуровневая категория: {coarse}\n"
-        f"Подкатегория из исходных данных: {fine}\n"
+        "You are a support analyst who formulates short and accurate names for ticket subcategories.\n"
+        f"Top-level category: {coarse}\n"
+        f"Subcategory from source data: {fine}\n"
         f"{keywords_line}\n"
-        "Ниже приведены типичные тексты вопросов (усечены до 160 символов). "
-        "Сконцентрируйся на повторяющихся болях клиента, а не на редких деталях.\n"
-        "Задача: придумай одно русскоязычное название (до 8 слов), которое отражает "
-        "основной сюжет большинства обращений в этой подкатегории. Не используй кавычки, "
-        "номера или финальную точку.\n"
-        "Обращения:\n"
+        "Below are typical query texts (truncated to 160 characters). "
+        "Concentrate on the recurring customer pain points, not on rare details.\n"
+        "Task: come up with one English name (up to 8 words) that reflects "
+        "the main plot of the majority of queries in this subcategory. Do not use quotation marks, "
+        "numbers, or a final period.\n"
+        "Queries:\n"
         f"{examples_str}\n"
-        "Выведи только название."
+        "Output only the name."
     )
 
 
 def call_qwen(client: OpenAI, prompt: str) -> str:
     """Query Qwen for a short Russian label."""
     system = (
-        "Ты придумываешь лаконичные названия подкатегорий обращений службы поддержки. "
-        "Всегда отвечай по-русски одной строкой, без кавычек и завершающей точки."
+        "You come up with concise names for support ticket subcategories. Always answer in English in a single line, without quotation marks or a final period."
     )
     resp = client.chat.completions.create(
         model=os.getenv("SCIBOX_QWEN_MODEL", "Qwen2.5-72B-Instruct-AWQ"),
@@ -119,7 +117,7 @@ def parse_args() -> argparse.Namespace:
         description="Generate category/subcategory labels via SciBox Qwen."
     )
     parser.add_argument(
-        "--data", type=Path, default=Path("data.csv"), help="Input CSV with FAQ data."
+        "--data", type=Path, default=Path("tickets.csv"), help="Input CSV with FAQ data."
     )
     parser.add_argument(
         "--output",
@@ -128,7 +126,7 @@ def parse_args() -> argparse.Namespace:
         help="Destination CSV file with columns category, subcategory, generated_label.",
     )
     parser.add_argument(
-        "--separator", type=str, default=";", help="CSV separator (default ';')."
+        "--separator", type=str, default=",", help="CSV separator (default ',')."
     )
     return parser.parse_args()
 
