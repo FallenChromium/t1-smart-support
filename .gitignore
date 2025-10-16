@@ -12,3 +12,7 @@ wheels/
 
 # macOS
 .DS_Store
+
+# project specific
+runs
+cache
